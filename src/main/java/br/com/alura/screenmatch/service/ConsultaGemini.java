@@ -1,56 +1,70 @@
 package br.com.alura.screenmatch.service;
-import com.google.cloud.ai.generativelanguage.v1beta.Content;
-import com.google.cloud.ai.generativelanguage.v1beta.GenerateContentResponse;
-import com.google.cloud.ai.generativelanguage.v1beta.GenerativeServiceSettings;
-import com.google.cloud.ai.generativelanguage.v1beta.GenerativeServiceClient;
-import com.google.cloud.ai.generativelanguage.v1beta.Part;
-import com.google.api.gax.core.FixedCredentialsProvider;
-import com.google.api.gax.rpc.ApiClientHeaderProvider;
 
-import java.io.IOException;
+import okhttp3.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class ConsultaGemini {
-    public String obterTraducao(String texto) {
-        // Pega a chave da API da variável de ambiente que você já configurou.
-        String apiKey = System.getenv("GEMINI_APIKEY");
+
+    private static final String MODEL = "models/gemini-1.5-flash-latest";
+    private static final String URL = "https://generativelanguage.googleapis.com/v1beta/" + MODEL + ":generateContent";
+
+    private static OkHttpClient client = new OkHttpClient();
+    private static ObjectMapper mapper = new ObjectMapper();
+    private static String apiKey;
+
+    public ConsultaGemini() {
+        this.apiKey = System.getenv("GEMINI_APIKEY");
         if (apiKey == null || apiKey.isEmpty()) {
-            throw new RuntimeException("Erro: A variável de ambiente GEMINI_APIKEY não foi definida.");
+            throw new RuntimeException("A variável de ambiente GEMINI_APIKEY não foi definida.");
         }
+    }
 
-        String modelName = "models/gemini-1.5-flash-latest"; // O nome do modelo tem um formato diferente
-
+    public static String obterTraducao(String texto) {
         try {
-            // Configura o cabeçalho da API para incluir a chave
-            ApiClientHeaderProvider headerProvider = ApiClientHeaderProvider.newBuilder()
-                    .setResourceHeaderKey("x-goog-api-key")
-                    .setResourceHeaderValue(apiKey)
+            // Monta o body seguindo o padrão da API v1beta
+            String json = "{\n" +
+                    "  \"contents\": [\n" +
+                    "    {\n" +
+                    "      \"parts\": [\n" +
+                    "        { \"text\": \"Traduza para o português: " + texto + "\" }\n" +
+                    "      ]\n" +
+                    "    }\n" +
+                    "  ]\n" +
+                    "}";
+
+            RequestBody body = RequestBody.create(
+                    json,
+                    MediaType.get("application/json; charset=utf-8")
+            );
+
+            Request request = new Request.Builder()
+                    .url(URL + "?key=" + apiKey)
+                    .post(body)
                     .build();
 
-            // Configura as definições do serviço para usar o cabeçalho de autenticação
-            GenerativeServiceSettings settings = GenerativeServiceSettings.newBuilder()
-                    .setTransportChannelProvider(
-                            GenerativeServiceSettings.defaultHttpJsonTransportProviderBuilder().build())
-                    .setHeaderProvider(headerProvider)
-                    .build();
+            Response response = client.newCall(request).execute();
 
-            // Usa um bloco try-with-resources para garantir que o cliente seja fechado
-            try (GenerativeServiceClient client = GenerativeServiceClient.create(settings)) {
-
-                // Monta o prompt para o modelo
-                Content content = Content.newBuilder()
-                        .addParts(Part.newBuilder().setText("traduza para o português o texto: " + texto))
-                        .build();
-
-                // Envia a requisição para a API
-                GenerateContentResponse response = client.generateContent(modelName, content);
-
-                // Extrai e retorna o texto da resposta
-                return response.getCandidates(0).getContent().getParts(0).getText();
+            if (!response.isSuccessful()) {
+                return "Erro: " + response.code() + " - " + response.message();
             }
-        } catch (IOException e) {
-            System.err.println("Ocorreu um erro de I/O ao se comunicar com a API do Gemini: " + e.getMessage());
+
+            String responseJson = response.body().string();
+            JsonNode root = mapper.readTree(responseJson);
+
+            // Extrai o texto traduzido do local real da resposta
+            return root
+                    .path("candidates")
+                    .path(0)
+                    .path("content")
+                    .path("parts")
+                    .path(0)
+                    .path("text")
+                    .asText();
+
+        } catch (Exception e) {
             e.printStackTrace();
-            return "Erro ao processar a tradução.";
+            return "Erro ao processar tradução.";
         }
     }
 }
